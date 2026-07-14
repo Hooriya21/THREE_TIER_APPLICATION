@@ -1,0 +1,99 @@
+name: Spring Boot CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+
+env:
+  IMAGE_NAME: springboot-demo
+
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # Setup Java
+      - name: Setup Java 17
+        run: |
+          sudo apt update
+          sudo apt install openjdk-17-jdk -y
+          java -version
+
+
+      # Build Application
+      - name: Build Spring Boot Application
+        run: |
+          chmod +x gradlew
+          ./gradlew build
+
+
+      # Login to GHCR
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io \
+          -u ${{ github.actor }} \
+          --password-stdin
+
+
+      # Build Docker Image
+      - name: Build Docker Image
+        run: |
+          docker build -t ghcr.io/hooriya21/${{ env.IMAGE_NAME }}:latest .
+
+
+      # Push Docker Image
+      - name: Push Docker Image
+        run: |
+          docker push ghcr.io/hooriya21/${{ env.IMAGE_NAME }}:latest
+
+
+      # Deploy on EC2
+      - name: Deploy to EC2
+        run: |
+
+          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+
+          chmod 400 key.pem
+
+          ssh -o StrictHostKeyChecking=no \
+          -i key.pem \
+          ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << EOF
+
+
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io \
+          -u ${{ github.actor }} \
+          --password-stdin
+
+
+          docker pull ghcr.io/hooriya21/${{ env.IMAGE_NAME }}:latest
+
+
+          docker stop ${{ env.IMAGE_NAME }} || true
+
+
+          docker rm ${{ env.IMAGE_NAME }} || true
+
+
+          docker run -d \
+          --name ${{ env.IMAGE_NAME }} \
+          -p 80:8080 \
+          ghcr.io/hooriya21/${{ env.IMAGE_NAME }}:latest
+        
+
+
+          EOF
